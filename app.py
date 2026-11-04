@@ -1,5 +1,6 @@
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 import cv2
@@ -17,16 +18,22 @@ def load_recognizer():
 
 
 class SignVideoRecorder(VideoProcessorBase):
-    """Collect camera frames in the browser session for later inference."""
+    """Collect camera frames and track recording duration."""
 
     def __init__(self):
         self.frames = []
         self.lock = threading.Lock()
         self.max_frames = 384
+        self.started_at = None
+        self.last_frame_at = None
 
     def recv(self, frame):
         image = frame.to_ndarray(format="bgr24")
+        now = time.monotonic()
         with self.lock:
+            if self.started_at is None:
+                self.started_at = now
+            self.last_frame_at = now
             if len(self.frames) < self.max_frames:
                 self.frames.append(image.copy())
         return frame
@@ -34,6 +41,18 @@ class SignVideoRecorder(VideoProcessorBase):
     def snapshot(self):
         with self.lock:
             return [frame.copy() for frame in self.frames]
+
+    def elapsed_seconds(self):
+        with self.lock:
+            if self.started_at is None:
+                return 0.0
+            end = self.last_frame_at or self.started_at
+            return max(0.0, end - self.started_at)
+
+
+def format_duration(seconds):
+    total = int(seconds)
+    return f"{total // 60:02d}:{total % 60:02d}"
 
 
 st.title("🤟 ASL Sign Recognition")
@@ -43,9 +62,8 @@ st.info(
     "It does not translate continuous signing into sentences."
 )
 
-st.subheader("Record with your camera")
-st.write("Keep your face, upper body, and both hands visible. Record one sign, then stop.")
-
+st.subheader("1. Record with your camera")
+st.write("Start the camera, perform one sign, then stop the camera.")
 ctx = webrtc_streamer(
     key="asl-camera-recorder",
     mode=WebRtcMode.SENDONLY,
@@ -55,15 +73,26 @@ ctx = webrtc_streamer(
 )
 
 processor = ctx.video_processor
+timer_area = st.empty()
+
+# Keep the timer updating while the WebRTC camera is recording.
+if ctx.state.playing and processor is not None:
+    while ctx.state.playing:
+        elapsed = processor.elapsed_seconds()
+        timer_area.metric("Recording time", format_duration(elapsed))
+        time.sleep(0.5)
+
 frames = processor.snapshot() if processor is not None else []
+duration = processor.elapsed_seconds() if processor is not None else 0.0
 
 if frames:
-    st.caption(f"Captured {len(frames)} frames (maximum 384).")
+    st.success(f"Recording captured · {format_duration(duration)} · {len(frames)} frames")
     if len(frames) >= 384:
-        st.warning("Frame limit reached. The recording has been capped; use a shorter sign recording.")
+        st.warning("The 384-frame limit was reached. Keep recordings short (about 16 seconds at 24 FPS).")
 
+st.subheader("2. Classify recording")
 if not ctx.state.playing and frames:
-    if st.button("Recognize recorded sign", type="primary"):
+    if st.button("Classify sign", type="primary"):
         video_path = None
         try:
             height, width = frames[0].shape[:2]
@@ -85,7 +114,7 @@ if not ctx.state.playing and frames:
                 writer.release()
 
             recognizer = load_recognizer()
-            with st.spinner("Extracting landmarks and recognizing the sign..."):
+            with st.spinner("Extracting landmarks and classifying the sign..."):
                 results = recognizer.predict_video(video_path)
 
             st.subheader("Prediction")
@@ -107,11 +136,11 @@ if not ctx.state.playing and frames:
             if video_path:
                 Path(video_path).unlink(missing_ok=True)
 elif not ctx.state.playing and not frames:
-    st.caption("Start the camera, record a sign, and stop the camera to enable recognition.")
+    st.caption("Start the camera to begin recording. Stop it when you finish the sign.")
 
 with st.expander("Alternative: upload a video"):
     uploaded = st.file_uploader("Upload a signing video", type=["mp4", "mov", "avi", "mkv"])
-    if uploaded and st.button("Recognize uploaded video"):
+    if uploaded and st.button("Classify uploaded video"):
         suffix = Path(uploaded.name).suffix or ".mp4"
         video_path = None
         try:
