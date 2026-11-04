@@ -132,35 +132,6 @@ if not ctx.state.playing and frames:
 elif not ctx.state.playing and not frames:
     st.caption("Start the camera to begin recording. Stop it when you finish the sign.")
 
-with st.expander("Alternative: upload a video"):
-    uploaded = st.file_uploader("Upload a signing video", type=["mp4", "mov", "avi", "mkv"])
-    if uploaded and st.button("Classify uploaded video"):
-        suffix = Path(uploaded.name).suffix or ".mp4"
-        video_path = None
-        try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                tmp.write(uploaded.getvalue())
-                video_path = tmp.name
-            recognizer = load_recognizer()
-            with st.spinner("Extracting landmarks and running inference..."):
-                results = recognizer.predict_video(video_path)
-            st.subheader("Upload prediction")
-            best = results[0]
-            st.metric("Predicted sign", best["label"], f'{best["confidence"]:.1%} confidence')
-            st.dataframe(
-                [
-                    {"Sign": item["label"], "Confidence": f'{item["confidence"]:.2%}'}
-                    for item in results
-                ],
-                use_container_width=True,
-                hide_index=True,
-            )
-        except Exception as exc:
-            st.error(f"Could not process this video: {exc}")
-            st.exception(exc)
-        finally:
-            if video_path:
-                Path(video_path).unlink(missing_ok=True)
 
 with st.expander("About this model"):
     st.write(
