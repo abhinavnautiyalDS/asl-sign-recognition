@@ -73,14 +73,8 @@ ctx = webrtc_streamer(
 )
 
 processor = ctx.video_processor
-timer_area = st.empty()
-
-# Keep the timer updating while the WebRTC camera is recording.
-if ctx.state.playing and processor is not None:
-    while ctx.state.playing:
-        elapsed = processor.elapsed_seconds()
-        timer_area.metric("Recording time", format_duration(elapsed))
-        time.sleep(0.5)
+# Do not block Streamlit's script thread with a timer loop. The duration is
+# calculated from captured frames and displayed after recording stops.
 
 frames = processor.snapshot() if processor is not None else []
 duration = processor.elapsed_seconds() if processor is not None else 0.0
